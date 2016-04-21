@@ -2,6 +2,7 @@
 Module for Approximate Bayesian Computation
 
 """
+from __future__ import print_function, division
 from abc import ABCMeta, abstractmethod
 import multiprocessing as mp
 import numpy as np
@@ -9,6 +10,8 @@ from scipy import stats
 from numpy.lib.recfunctions import stack_arrays
 from numpy.testing import assert_almost_equal
 import time
+import logging
+import traceback
 
 class ABCProcess(mp.Process):
     '''
@@ -129,7 +132,8 @@ class Model(object):
 
 def basic_abc(model, data, epsilon=1, min_samples=10,
               parallel=False, n_procs='all', pmc_mode=False,
-              weights='None', theta_prev='None', tau_squared='None'):
+              weights='None', theta_prev='None', tau_squared='None',
+              verbose=False):
     """
     Perform Approximate Bayesian Computation (ABC) on a data set given a
     forward model.
@@ -219,6 +223,14 @@ def basic_abc(model, data, epsilon=1, min_samples=10,
                                     replace=True, p=weights/weights.sum())]
 
             theta = stats.multivariate_normal.rvs(theta_star, tau_squared)
+            
+            # Enforce theta within bounds:
+            if hasattr(model, 'bounds'):
+                ok = np.all([b[0] < t < b[1] for b,t in zip(model.bounds, theta)])
+                while not ok:
+                    theta = stats.multivariate_normal.rvs(theta_star, tau_squared)
+                    ok = np.all([b[0] < t < b[1] for b,t in zip(model.bounds, theta)])
+
             if np.isscalar(theta) == True:
                 theta = [theta]
 
@@ -226,11 +238,15 @@ def basic_abc(model, data, epsilon=1, min_samples=10,
         else:
             theta = model.draw_theta()
 
-        synthetic_data = model.generate_data(theta)
-
-        synthetic_summary_stats = model.summary_stats(synthetic_data)
-        distance = model.distance_function(data_summary_stats,
-                                           synthetic_summary_stats)
+        try:
+            synthetic_data = model.generate_data(theta)
+            synthetic_summary_stats = model.summary_stats(synthetic_data)
+            distance = model.distance_function(data_summary_stats,
+                                               synthetic_summary_stats)
+        except Exception, e:
+            print('Error generating data!')
+            print(traceback.format_exc())
+            distance = np.inf
 
         if distance < epsilon:
             accepted_count += 1
@@ -240,7 +256,10 @@ def basic_abc(model, data, epsilon=1, min_samples=10,
         else:
             pass
             #rejected.append(theta)
-
+        if trial_count > 1 and trial_count % 100==0 and verbose:
+            print('{} samples accepted ({:.1f}%).'.format(accepted_count,
+                                                  accepted_count/trial_count*100))
+        
     posterior = np.asarray(posterior).T
 
     if len(posterior.shape) > 1:
@@ -260,7 +279,7 @@ def basic_abc(model, data, epsilon=1, min_samples=10,
 
 def pmc_abc(model, data, epsilon_0=1, min_samples=10,
             steps=10, resume=None, parallel=False, n_procs='all', 
-            sample_only=False):
+            sample_only=False, verbose=False):
     """
     Perform a sequence of ABC posterior approximations using the sequential
     population Monte Carlo algorithm.
@@ -345,7 +364,7 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
         epsilon = epsilon_0
 
     for step in steps:
-        print 'Starting step {}'.format(step)
+        print('Starting step {}, epsilon={}'.format(step, epsilon))
         if step == 0:
         #Fist ABC calculation
 
@@ -354,8 +373,8 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
                     n_procs = mp.cpu_count()
 
                 chunk = np.ceil(min_samples/float(n_procs))
-                print "Running {} particles on {} processors".format(chunk,
-                                                                     n_procs)
+                print("Running {} particles on {} processors".format(chunk,
+                                                                     n_procs))
 
                 output = mp.Queue()
                 processes = [ABCProcess(target=parallel_basic_abc,
@@ -378,7 +397,8 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
 
                 output_record[step] = basic_abc(model, data, epsilon=epsilon,
                                             min_samples=min_samples,
-                                            parallel=False, pmc_mode=False)
+                                            parallel=False, pmc_mode=False,
+                                                verbose=verbose)
 
             theta = output_record[step]['theta accepted']
             #print theta.shape
@@ -404,8 +424,8 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
                     n_procs = mp.cpu_count()
 
                 chunk = np.ceil(min_samples/float(n_procs))
-                print "Running {} particles on {} processors".format(chunk,
-                                                                     n_procs)
+                print("Running {} particles on {} processors".format(chunk,
+                                                                     n_procs))
 
                 output = mp.Queue()
                 processes = [ABCProcess(target=parallel_basic_abc,
@@ -434,7 +454,8 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
                                             n_procs=n_procs, pmc_mode=True,
                                             weights=weights,
                                             theta_prev=theta_prev,
-                                            tau_squared=tau_squared)
+                                            tau_squared=tau_squared, 
+                                                verbose=verbose)
 
             theta = output_record[step]['theta accepted']
             epsilon = stats.scoreatpercentile(output_record[step]['D accepted'],
