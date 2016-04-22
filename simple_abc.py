@@ -5,6 +5,7 @@ Module for Approximate Bayesian Computation
 from __future__ import print_function, division
 from abc import ABCMeta, abstractmethod
 import multiprocessing as mp
+#import threading
 import numpy as np
 from scipy import stats
 from numpy.lib.recfunctions import stack_arrays
@@ -14,6 +15,7 @@ import logging
 import traceback
 
 class ABCProcess(mp.Process):
+#class ABCProcess(threading.Thread):
     '''
 
     '''
@@ -362,9 +364,9 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
     else:
         steps = xrange(steps)
         epsilon = epsilon_0
-
     for step in steps:
         print('Starting step {}, epsilon={}'.format(step, epsilon))
+        start_time = time.time()
         if step == 0:
         #Fist ABC calculation
 
@@ -479,6 +481,10 @@ def pmc_abc(model, data, epsilon_0=1, min_samples=10,
             output_record[step]['eff sample size'] = effective_sample
 
             output_record[step]['weights'] = weights
+
+        end_time = time.time()
+        print('step took {} minutes.'.format((end_time-start_time)/60))
+
 
     return output_record
 
