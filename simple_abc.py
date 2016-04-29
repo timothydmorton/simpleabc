@@ -132,7 +132,48 @@ class Model(object):
 #########################    ABC Algorithms   ##################################
 ################################################################################
 
-def basic_abc(model, data, epsilon=1, min_samples=10,
+def sample_one_theta(model, data, epsilon, weights='None', pmc_mode=False,
+                     theta_prev='None', tau_squared='None'):
+    distance = np.inf
+    n_rejected = 0
+
+    while distance < epsilon:
+        if pmc_mode:
+            theta_star = theta_prev[:, np.random.choice(
+                                    xrange(0, theta_prev.shape[1]),
+                                    replace=True, p=weights/weights.sum())]
+
+            theta = stats.multivariate_normal.rvs(theta_star, tau_squared)
+
+            # Enforce theta within bounds:
+            if hasattr(model, 'bounds'):
+                ok = np.all([b[0] < t < b[1] for b,t in zip(model.bounds, theta)])
+                while not ok:
+                    theta = stats.multivariate_normal.rvs(theta_star, tau_squared)
+                    ok = np.all([b[0] < t < b[1] for b,t in zip(model.bounds, theta)])
+
+            if np.isscalar(theta) == True:
+                theta = [theta]
+
+        else:
+            theta = model.draw_theta()
+
+        try:
+            synthetic_data = model.generate_data(theta)
+            synthetic_summary_stats = model.summary_stats(synthetic_data)
+            distance = model.distance_function(data_summary_stats,
+                                               synthetic_summary_stats)
+        except Exception, e:
+            print('Error generating data!')
+            print(traceback.format_exc())
+            distance = np.inf
+
+        if distance > epsilon:
+            n_rejected += 1
+
+    return theta, distance, n_rejected
+
+def basic_abc(model, data, epsilon=1, min_samples=10, pool=None,
               parallel=False, n_procs='all', pmc_mode=False,
               weights='None', theta_prev='None', tau_squared='None',
               verbose=False):
@@ -208,7 +249,6 @@ def basic_abc(model, data, epsilon=1, min_samples=10,
     Forth coming.
 
     """
-
 
     posterior, rejected, distances = [], [], []
     trial_count, accepted_count = 0, 0
